@@ -1,7 +1,7 @@
 import type { DriverBase, DriverVehicleType, SignupRole, StoreBrand, StoreLocation } from './types'
 import { getAccessToken } from './authSession'
 
-const API_BASE = '/api/v1'
+const API_BASE = 'https://nexorawaypointsolution-backend.vercel.app/api/v1'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (import.meta.env.DEV && import.meta.env.VITE_API_MODE !== 'backend' && !path.startsWith('/auth/')) {
