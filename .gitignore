@@ -1,0 +1,17 @@
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.venv/
+
+# Python / Backend
+.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.venv/
+*.pyc
+
+# Docker & Environment
+.env
+.DS_Store
+*.log
