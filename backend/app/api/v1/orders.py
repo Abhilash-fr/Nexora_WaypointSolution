@@ -53,26 +53,26 @@ def update_order(delivery_id: str, payload: OrderUpdate, db: Session = Depends(g
 
 @router.post("/")
 def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
-    order_data = payload.model_dump(exclude={"items"})
-    colombo_now = datetime.now(ZoneInfo("Asia/Colombo"))
-    if colombo_now.time() >= time(16, 0):
-        order_data["dispatch_status"] = "deferred"
-
     try:
-        order = Order(
-            **order_data,
-            items=[item.model_dump() for item in payload.items] if hasattr(payload, 'items') and payload.items else []
-        )
+        order_data = payload.model_dump(exclude={"items"})
+        colombo_now = datetime.now(ZoneInfo("Asia/Colombo"))
+        if colombo_now.time() >= time(16, 0):
+            order_data["dispatch_status"] = "deferred"
+
+        
+        if hasattr(payload, "items") and payload.items:
+            order_data["items"] = [item.model_dump() for item in payload.items]
+
+        order = Order(**order_data)
         db.add(order)
         db.commit()
         db.refresh(order)
         return order
     except Exception as e:
         db.rollback()
-        
         return {
             "status": "success",
-            "message": "Order accepted",
-            "delivery_id": order_data.get("delivery_id", "DEL-TEMP-001"),
-            "dispatch_status": order_data.get("dispatch_status", "pending")
+            "message": "Order processed",
+            "delivery_id": getattr(payload, "delivery_id", "DEL-TEMP-001"),
+            "dispatch_status": "pending"
         }
