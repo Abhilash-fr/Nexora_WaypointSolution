@@ -50,3 +50,7 @@ def dispatch_trip(trip_id: str, db: Session = Depends(get_db)):
         order.dispatch_status = "dispatched"
     db.commit()
     return {"status": "dispatched", "trip_id": trip_id, "count": len(orders)}
+    
+    @router.get("/flags")
+def get_loading_flags():
+    return []
