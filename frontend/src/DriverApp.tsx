@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api } from './api'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet'
+import type { LatLngTuple } from 'leaflet'
 import L from 'leaflet'
 
 // Fix default Leaflet marker icon links in Vite
@@ -23,9 +24,103 @@ interface DeliveryStop {
   brand: 'Waypoint Fresh' | 'Waypoint Style' | 'Waypoint Tech'
   tags: StopTag[]; items: DeliveryItem[]; status: StopStatus
   arrivedAt?: string; completedAt?: string; podName?: string; podRef?: string; podPhoto?: boolean
+  lat?: number; lng?: number
 }
 
 interface OfflineAction { id: string; type: string; timestamp: string; stopId: string }
+
+function decodePolyline(encoded: string): LatLngTuple[] {
+  const points: LatLngTuple[] = []
+  let index = 0
+  let latitude = 0
+  let longitude = 0
+
+  while (index < encoded.length) {
+    let result = 0
+    let shift = 0
+    let byte: number
+    do {
+      byte = encoded.charCodeAt(index++) - 63
+      result |= (byte & 0x1f) << shift
+      shift += 5
+    } while (byte >= 0x20)
+    latitude += result & 1 ? ~(result >> 1) : result >> 1
+
+    result = 0
+    shift = 0
+    do {
+      byte = encoded.charCodeAt(index++) - 63
+      result |= (byte & 0x1f) << shift
+      shift += 5
+    } while (byte >= 0x20)
+    longitude += result & 1 ? ~(result >> 1) : result >> 1
+    points.push([latitude / 1e5, longitude / 1e5])
+  }
+  return points
+}
+
+function RouteLine({ waypoints, onError }: {
+  waypoints: LatLngTuple[]
+  onError: (message: string) => void
+}) {
+  const [positions, setPositions] = useState<LatLngTuple[]>([])
+  const requestKey = JSON.stringify(waypoints)
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let cancelled = false
+    setPositions([])
+
+    async function loadRoute() {
+      try {
+        const response = await fetch('/api/v1/maps/route-polyline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            waypoints: waypoints.map(([latitude, longitude]) => ({ latitude, longitude })),
+          }),
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          const body = await response.json().catch(() => null) as { detail?: string } | null
+          throw new Error(body?.detail || `Road route request failed (HTTP ${response.status}).`)
+        }
+        const data = await response.json() as { encodedPolyline?: string }
+        if (!data.encodedPolyline) throw new Error('The route service returned no road geometry.')
+        if (cancelled) return
+        setPositions(decodePolyline(data.encodedPolyline))
+        onErrorRef.current('')
+      } catch (error) {
+        if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) {
+          onErrorRef.current(error instanceof Error ? error.message : 'Could not load the suggested road route.')
+        }
+      }
+    }
+
+    void loadRoute()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [requestKey])
+
+  return positions.length > 1
+    ? <Polyline positions={positions} pathOptions={{ color: '#0f766e', opacity: 0.9, weight: 5 }} />
+    : null
+}
+
+function FitRouteBounds({ points }: { points: LatLngTuple[] }) {
+  const map = useMap()
+  const pointsKey = JSON.stringify(points)
+
+  useEffect(() => {
+    if (points.length > 1) map.fitBounds(points, { padding: [24, 24], maxZoom: 13 })
+  }, [map, pointsKey])
+
+  return null
+}
 
 const VEHICLE_ID = '—'
 const PLATE = '—'
@@ -344,17 +439,20 @@ export default function DriverApp({ onSwitchView, isDark = false, onToggleDark }
   const [signal] = useState(3)
   const [time, setTime] = useState(new Date())
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [routeError, setRouteError] = useState<string | null>(null)
 
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => {
     let cancelled = false
     api.getActiveRoute().then(route => {
       if (cancelled) return
-      const mapped: DeliveryStop[] = (route.stops || []).map((s: any, i: number) => ({
+      const mapped: DeliveryStop[] = route.stops.map((s, i) => ({
         id: s.deliveryId || `${s.storeId}-${i}`, stopNo: Number(s.stopNumber || i + 1), outletId: s.storeId,
         outletName: s.storeName, district: s.district || '', address: 'Address not available in database',
         windowStart: s.windowStart || '—', windowEnd: s.windowEnd || '—',
         brand: 'Waypoint Fresh', tags: [], items: [], status: s.deliveryStatus === 'COMPLETED' ? 'completed' : i === 0 ? 'active' : 'upcoming',
+        lat: s.latitude ?? undefined,
+        lng: s.longitude ?? undefined,
       }))
       setStops(mapped)
       setConnection('online')
@@ -374,6 +472,17 @@ export default function DriverApp({ onSwitchView, isDark = false, onToggleDark }
 
   const activeStop = stops.find(s => s.id === activeStopId)
   const completedCount = stops.filter(s => s.status === 'completed').length
+  const completionPercent = stops.length ? Math.round((completedCount / stops.length) * 100) : 0
+  const mappedStops = useMemo(
+    () => stops.filter((stop): stop is DeliveryStop & { lat: number; lng: number } =>
+      typeof stop.lat === 'number' && Number.isFinite(stop.lat) &&
+      typeof stop.lng === 'number' && Number.isFinite(stop.lng)),
+    [stops],
+  )
+  const routeWaypoints = useMemo<LatLngTuple[]>(() => mappedStops.length
+    ? [[6.953, 79.888], ...mappedStops.map(stop => [stop.lat, stop.lng] as LatLngTuple), [6.953, 79.888]]
+    : [], [mappedStops])
+  const handleRouteError = useCallback((message: string) => setRouteError(message || null), [])
   const timeStr = time.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
   return (
@@ -442,17 +551,34 @@ export default function DriverApp({ onSwitchView, isDark = false, onToggleDark }
                 </div>
                 <div className="mt-3 flex items-center gap-3">
                   <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                    <div className="h-full bg-teal-500 rounded-full transition-all duration-700" style={{ width: `${(completedCount / stops.length) * 100}%` }} />
+                    <div className="h-full bg-teal-500 rounded-full transition-all duration-700" style={{ width: `${completionPercent}%` }} />
                   </div>
-                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400 shrink-0">{Math.round((completedCount / stops.length) * 100)}%</span>
+                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400 shrink-0">{completionPercent}%</span>
                 </div>
               </div>
 
               <div className="mx-4 mt-3 shrink-0 rounded-xl overflow-hidden border border-slate-700 h-[220px]">
-                <div className="h-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-center px-6">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Live map coordinates are not stored for these outlets in the database.</p>
-                </div>
+                <MapContainer center={[6.953, 79.888]} zoom={12} scrollWheelZoom={false} className="h-full w-full">
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  {routeWaypoints.length > 1 && <FitRouteBounds points={routeWaypoints} />}
+                  <Marker position={[6.953, 79.888]}><Popup>Peliyagoda Depot</Popup></Marker>
+                  {mappedStops.map(stop => (
+                    <Marker key={stop.id} position={[stop.lat, stop.lng]}>
+                      <Popup>{stop.stopNo}. {stop.outletId} · {stop.outletName}</Popup>
+                    </Marker>
+                  ))}
+                  {routeWaypoints.length >= 3 && <RouteLine waypoints={routeWaypoints} onError={handleRouteError} />}
+                </MapContainer>
               </div>
+              {stops.length > mappedStops.length && (
+                <p className="mx-4 mt-2 text-xs text-amber-700 dark:text-amber-300">
+                  {stops.length - mappedStops.length} stop(s) have no saved map location. Add coordinates in Store &gt; Settings &gt; Delivery Map Locations.
+                </p>
+              )}
+              {routeError && <p role="alert" className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{routeError}</p>}
 
               {offlineActions.length > 0 && (
                 <div className="mx-4 mt-3 flex items-center gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-4 py-3 shrink-0">

@@ -226,6 +226,30 @@ export interface BackendOutlet {
   window_open_time: string
   window_close_time: string
   mall_window?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+export interface ActiveRouteStop {
+  stopNumber: number
+  deliveryId: string
+  storeId: string
+  storeName: string
+  district: string
+  deliveryStatus: string
+  windowStart?: string | null
+  windowEnd?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+export interface ActiveRoute {
+  tripId: string | null
+  vehicleId: string | null
+  vehiclePlate: string | null
+  driverName: string | null
+  status: string
+  stops: ActiveRouteStop[]
 }
 
 export interface CreateOrderPayload {
@@ -250,7 +274,12 @@ export const api = {
     request<BackendOrder>(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getVehicles: () => request<BackendVehicle[]>('/fleet/vehicles'),
   getOutlets: () => request<BackendOutlet[]>('/planning/outlets'),
-  getActiveRoute: () => request<any>('/delivery/active-route'),
+  updateOutletLocation: (outletId: string, latitude: number, longitude: number) =>
+    request<BackendOutlet>(`/planning/outlets/${encodeURIComponent(outletId)}/location`, {
+      method: 'PATCH',
+      body: JSON.stringify({ latitude, longitude }),
+    }),
+  getActiveRoute: () => request<ActiveRoute>('/delivery/active-route'),
   completeStop: (deliveryId: string) =>
     request<any>('/delivery/complete-stop', { method: 'POST', body: JSON.stringify({ delivery_id: deliveryId }) }),
   getLoadingManifests: () => request<any[]>('/loading/manifests'),

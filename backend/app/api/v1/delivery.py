@@ -16,13 +16,19 @@ class CompleteStopRequest(BaseModel):
 
 @router.get("/active-route")
 def active_route(db: Session = Depends(get_db)):
-    orders = (
+    assigned_orders = (
         db.query(Order)
         .filter(Order.vehicle_id.isnot(None))
         .filter(Order.dispatch_status.in_(["assigned", "dispatched", "in_transit"]))
         .order_by(Order.trip_id, Order.seq_in_route)
         .all()
     )
+    route_vehicle_id = assigned_orders[0].vehicle_id if assigned_orders else None
+    route_trip_id = assigned_orders[0].trip_id if assigned_orders else None
+    orders = [
+        order for order in assigned_orders
+        if order.vehicle_id == route_vehicle_id and order.trip_id == route_trip_id
+    ]
     stops = []
     for idx, order in enumerate(orders, 1):
         outlet = db.query(Outlet).filter(Outlet.outlet_id == order.outlet_id).first()
@@ -35,6 +41,8 @@ def active_route(db: Session = Depends(get_db)):
             "deliveryStatus": "PENDING" if order.dispatch_status != "delivered" else "COMPLETED",
             "windowStart": outlet.window_open_time if outlet else None,
             "windowEnd": outlet.window_close_time if outlet else None,
+            "latitude": outlet.latitude if outlet else None,
+            "longitude": outlet.longitude if outlet else None,
         })
     vehicle = None
     if orders:

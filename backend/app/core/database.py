@@ -1,6 +1,9 @@
 import os
+from app.core.config import load_environment
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+load_environment()
 
 raw_url = os.getenv(
     "DATABASE_URL", 

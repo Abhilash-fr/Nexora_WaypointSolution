@@ -17,6 +17,9 @@ services:
   backend:
     build: ./backend
     container_name: nexora_backend
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       DATABASE_URL: postgresql://postgres:postgrespassword@db:5432/nexora_db
     ports:

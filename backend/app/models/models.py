@@ -28,6 +28,8 @@ class Outlet(Base):
     window_open_time = Column(String, nullable=False)
     window_close_time = Column(String, nullable=False)
     mall_window = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
 # 3. Vehicles Model
 class Vehicle(Base):

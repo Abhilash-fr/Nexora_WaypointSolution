@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from './api'
+import type { BackendOutlet } from './api'
 
 type Tab = 'dashboard' | 'order' | 'history' | 'settings'
 type OrderStatus = 'delivered' | 'in-transit' | 'scheduled' | 'deferred' | 'pending'
@@ -508,6 +509,61 @@ function SettingsTab() {
   const [smsAlerts, setSmsAlerts] = useState(false)
   const [contactName, setContactName] = useState(OUTLET.manager)
   const [contactPhone, setContactPhone] = useState(OUTLET.phone)
+  const [mapOutlets, setMapOutlets] = useState<BackendOutlet[]>([])
+  const [locationOutletId, setLocationOutletId] = useState('')
+  const [latitude, setLatitude] = useState('')
+  const [longitude, setLongitude] = useState('')
+  const [locationError, setLocationError] = useState<string | null>(null)
+  const [locationSaved, setLocationSaved] = useState(false)
+  const [locationSaving, setLocationSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api.getOutlets().then(outlets => {
+      if (cancelled) return
+      setMapOutlets(outlets)
+      const firstOutlet = outlets[0]
+      if (firstOutlet) {
+        setLocationOutletId(firstOutlet.outlet_id)
+        setLatitude(firstOutlet.latitude == null ? '' : String(firstOutlet.latitude))
+        setLongitude(firstOutlet.longitude == null ? '' : String(firstOutlet.longitude))
+      }
+    }).catch(error => {
+      if (!cancelled) setLocationError(error instanceof Error ? error.message : 'Could not load outlet locations.')
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const selectedLocationOutlet = mapOutlets.find(outlet => outlet.outlet_id === locationOutletId)
+
+  async function saveOutletLocation() {
+    if (!latitude.trim() || !longitude.trim()) {
+      setLocationError('Enter both a latitude and longitude.')
+      setLocationSaved(false)
+      return
+    }
+    const lat = Number(latitude)
+    const lng = Number(longitude)
+    if (!selectedLocationOutlet || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+      lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setLocationError('Enter a valid latitude (-90 to 90) and longitude (-180 to 180).')
+      setLocationSaved(false)
+      return
+    }
+    setLocationSaving(true)
+    setLocationError(null)
+    setLocationSaved(false)
+    try {
+      const updatedOutlet = await api.updateOutletLocation(locationOutletId, lat, lng)
+      setMapOutlets(outlets => outlets.map(outlet =>
+        outlet.outlet_id === updatedOutlet.outlet_id ? updatedOutlet : outlet))
+      setLocationSaved(true)
+    } catch (error) {
+      setLocationError(error instanceof Error ? error.message : 'Could not save the outlet location.')
+    } finally {
+      setLocationSaving(false)
+    }
+  }
 
   function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
     return (
@@ -528,6 +584,47 @@ function SettingsTab() {
               <span className="font-mono text-xs text-slate-700 dark:text-slate-200 font-medium">{f.value}</span>
             </div>
           ))}
+        </div>
+      </div>
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700">
+          <p className="font-semibold text-slate-800 dark:text-white text-sm">Delivery Map Locations</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Saved coordinates place stops on the driver map and are used to request a road route.</p>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label htmlFor="map-outlet" className="text-xs text-slate-500 dark:text-slate-400 font-medium block mb-1.5">Outlet</label>
+            <select id="map-outlet" value={locationOutletId} onChange={event => {
+              const outlet = mapOutlets.find(item => item.outlet_id === event.target.value)
+              setLocationOutletId(event.target.value)
+              setLatitude(outlet?.latitude == null ? '' : String(outlet.latitude))
+              setLongitude(outlet?.longitude == null ? '' : String(outlet.longitude))
+              setLocationError(null)
+              setLocationSaved(false)
+            }} disabled={!mapOutlets.length}
+              className="w-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-2.5 text-sm">
+              {mapOutlets.map(outlet => <option key={outlet.outlet_id} value={outlet.outlet_id}>{outlet.outlet_id} · {outlet.brand} · {outlet.district}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="map-latitude" className="text-xs text-slate-500 dark:text-slate-400 font-medium block mb-1.5">Latitude</label>
+              <input id="map-latitude" type="number" step="any" min="-90" max="90" value={latitude} onChange={event => setLatitude(event.target.value)} placeholder="e.g. 6.95"
+                className="w-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-2.5 text-sm" />
+            </div>
+            <div>
+              <label htmlFor="map-longitude" className="text-xs text-slate-500 dark:text-slate-400 font-medium block mb-1.5">Longitude</label>
+              <input id="map-longitude" type="number" step="any" min="-180" max="180" value={longitude} onChange={event => setLongitude(event.target.value)} placeholder="e.g. 79.88"
+                className="w-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-2.5 text-sm" />
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Use the exact coordinates from Google Maps: right-click (or long-press) the store location and copy latitude, longitude.</p>
+          {locationError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{locationError}</p>}
+          {locationSaved && <p role="status" className="text-xs text-emerald-700 dark:text-emerald-400">Location saved. It will appear on the driver route when the route reloads.</p>}
+          <button onClick={() => void saveOutletLocation()} disabled={!selectedLocationOutlet || locationSaving}
+            className="w-full py-2.5 rounded-xl bg-navy-700 dark:bg-navy-600 text-white font-semibold text-sm hover:bg-navy-600 dark:hover:bg-navy-500 transition-colors disabled:opacity-50">
+            {locationSaving ? 'Saving location…' : 'Save Map Location'}
+          </button>
         </div>
       </div>
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">

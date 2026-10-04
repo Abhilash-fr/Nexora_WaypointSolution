@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.models.models import (
@@ -11,6 +12,12 @@ from app.models.models import (
 )
 
 router = APIRouter(tags=["Dispatcher & Constraint Data"])
+
+
+class OutletLocationUpdate(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
 
 @router.get("/travel-times")
 def get_travel_times(db: Session = Depends(get_db)):
@@ -36,3 +43,19 @@ def get_traffic_speeds(db: Session = Depends(get_db)):
 @router.get("/outlets")
 def get_outlets(db: Session = Depends(get_db)):
     return db.query(Outlet).order_by(Outlet.outlet_id).all()
+
+
+@router.patch("/outlets/{outlet_id}/location")
+def update_outlet_location(
+    outlet_id: str,
+    payload: OutletLocationUpdate,
+    db: Session = Depends(get_db),
+):
+    outlet = db.query(Outlet).filter(Outlet.outlet_id == outlet_id).first()
+    if not outlet:
+        raise HTTPException(status_code=404, detail="Outlet not found")
+    outlet.latitude = payload.latitude
+    outlet.longitude = payload.longitude
+    db.commit()
+    db.refresh(outlet)
+    return outlet
